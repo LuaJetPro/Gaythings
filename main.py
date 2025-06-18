@@ -1,6 +1,5 @@
 from flask import Flask, request, jsonify
-import sqlite3
-import time
+import sqlite3, time, os
 
 app = Flask(__name__)
 
@@ -13,12 +12,17 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Generate new key (for you only)
+# Root route to verify service is up
+@app.route('/')
+def index():
+    return "KeySystemBackend is running!"
+
+# Generate new key (for admin use)
 @app.route('/generate', methods=['POST'])
 def generate_key():
     import random, string
     key = ''.join(random.choices(string.ascii_uppercase + string.digits, k=20))
-    expires = int(time.time()) + (36 * 60 * 60)  # 36 hours from now
+    expires = int(time.time()) + (36 * 60 * 60)  # 36h
 
     conn = sqlite3.connect('keys.db')
     c = conn.cursor()
@@ -28,14 +32,14 @@ def generate_key():
 
     return jsonify({'key': key, 'expires_in_hours': 36})
 
-# Verify key
+# Verify key (called by your Roblox script)
 @app.route('/verify', methods=['GET'])
 def verify_key():
-    # Check Referer header
-    referer = request.headers.get('Referer')
-    if referer is None or not referer.startswith("https://work.ink/"):
-        return jsonify({'valid': False, 'reason': 'Bypass detected: Invalid Referer'})
-    
+    # Optional: Referer check for bypass detection
+    referer = request.headers.get('Referer','')
+    if not referer.startswith("https://work.ink/"):
+        return jsonify({'valid': False, 'reason': 'Bypass detected'}), 403
+
     user_key = request.args.get('key')
     if not user_key:
         return jsonify({'valid': False, 'reason': 'No key provided'})
@@ -43,17 +47,17 @@ def verify_key():
     conn = sqlite3.connect('keys.db')
     c = conn.cursor()
     c.execute("SELECT expires FROM keys WHERE key=?", (user_key,))
-    result = c.fetchone()
+    row = c.fetchone()
     conn.close()
 
-    if not result:
+    if not row:
         return jsonify({'valid': False, 'reason': 'Key not found'})
-
-    expires = result[0]
-    if int(time.time()) > expires:
+    if int(time.time()) > row[0]:
         return jsonify({'valid': False, 'reason': 'Key expired'})
-    else:
-        return jsonify({'valid': True})
+    return jsonify({'valid': True})
 
-init_db()
-app.run(host="0.0.0.0", port=8080)
+# Fire it up on the right port
+if __name__ == '__main__':
+    init_db()
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
